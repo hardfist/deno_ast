@@ -1,7 +1,7 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 
-use std::borrow::Cow;
-use std::sync::Arc;
+use std::borrow::{BorrowMut, Cow};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use deno_media_type::MediaType;
@@ -349,11 +349,11 @@ fn transpile(
 
 #[derive(Default, Clone)]
 struct DiagnosticCollector {
-  diagnostics_cell: Lrc<RefCell<Vec<SwcDiagnostic>>>,
+  diagnostics_cell: Arc<Mutex<Vec<SwcDiagnostic>>>,
 }
 
-unsafe impl Send for DiagnosticCollector {}
-unsafe impl Sync for DiagnosticCollector {}
+// unsafe impl Send for DiagnosticCollector {}
+// unsafe impl Sync for DiagnosticCollector {}
 
 impl DiagnosticCollector {
   pub fn into_handler(self) -> crate::swc::common::errors::Handler {
@@ -368,7 +368,7 @@ impl DiagnosticCollector {
 impl crate::swc::common::errors::Emitter for DiagnosticCollector {
   fn emit(&mut self, db: &crate::swc::common::errors::DiagnosticBuilder<'_>) {
     use std::ops::Deref;
-    self.diagnostics_cell.borrow_mut().push(db.deref().clone());
+    self.diagnostics_cell.lock().unwrap().push(db.deref().clone());
   }
 }
 
@@ -485,7 +485,7 @@ pub fn fold_program(
   );
 
   let emitter = DiagnosticCollector::default();
-  let diagnostics_cell = emitter.diagnostics_cell.clone();
+  let mut diagnostics_cell = emitter.diagnostics_cell.clone();
   let handler = emitter.into_handler();
   let result = crate::swc::common::errors::HANDLER.set(&handler, || {
     helpers::HELPERS.set(&helpers::Helpers::new(false), || {
@@ -493,8 +493,7 @@ pub fn fold_program(
     })
   });
 
-  let mut diagnostics = diagnostics_cell.borrow_mut();
-  let diagnostics = std::mem::take(&mut *diagnostics);
+  let diagnostics = diagnostics_cell.borrow_mut().lock().unwrap().clone();
   ensure_no_fatal_swc_diagnostics(source_map, diagnostics.into_iter())?;
   Ok(result)
 }
